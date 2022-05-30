@@ -4,6 +4,7 @@ A instruction trace script based on Frida-Stalker.
 """
 
 import argparse
+from ast import arg
 import binascii
 import json
 import os
@@ -37,19 +38,19 @@ def _custom_script_on_message(message, data):
 
 def _parse_args():
     parser = argparse.ArgumentParser(usage="sktrace [options] -l libname -i symbol|hexaddr target")
-    parser.add_argument("-m", "--inject-method", choices=["spawn", "attach"],
-                        default="spawn",
+    parser.add_argument("-m", "--inject-method", choices=["spawn", "attach"], default="spawn",
                         help="Specify how frida should inject into the process.")
     parser.add_argument("-l", "--libname", required=True, 
                         help="Specify a native library like libnative-lib.so")
     parser.add_argument("-i", "--interceptor", required=True, 
                         help="Specity a function (symbol or a hex offset address) to trace.")
+    parser.add_argument("-e", "--end-addr", required=False, 
+                        help="Specity a end address to trace.")
     parser.add_argument("-p", "--prepend", type=argparse.FileType("r"),
                         help="Prepend a Frida script to run before sktrace does.")
     parser.add_argument("-a", "--append", type=argparse.FileType("r"),
                         help="Append a Frida script to run after sktrace has started.")
-    parser.add_argument("-v", "--version", action='version',
-                        version="%(prog)s " + __version__,
+    parser.add_argument("-v", "--version", action='version', version="%(prog)s " + __version__,
                         help="Show the version.")
     parser.add_argument("target",
                         help="The name of the application to trace.")
@@ -67,9 +68,9 @@ def main():
         raise Exception("Read script error.")
 
     trace_mgr = TraceMgr()
-
+    
     args = _parse_args()
-
+    
     config = {
         "type": "config",
         "payload": {}
@@ -83,12 +84,17 @@ def main():
         config["payload"]["symbol"] = args.interceptor
     
     device = frida.get_usb_device(1)
+
+    if args.end_addr:
+        config["payload"]['endAddress'] = args.end_addr
+
     if args.inject_method == "spawn":
         raise Exception("working for this ...")
         pid = device.spawn([args.target])
         config["payload"]["spawn"] = True
     else:
         pid = device.get_process(args.target).pid
+        # pid = args.target
         config["payload"]["spawn"] = False
 
     session = device.attach(pid)
