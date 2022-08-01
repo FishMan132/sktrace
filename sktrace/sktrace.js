@@ -1,5 +1,3 @@
-
-
 const arm64CM = new CModule(`
 #include <gum/gumstalker.h>
 #include <stdio.h>
@@ -94,18 +92,19 @@ on_arm64_after(GumCpuContext *cpu_context,
         const message = messagePtr.readUtf8String();
         console.log(message)
         // send(message)
-      }, 'void', ['pointer']),
+    }, 'void', ['pointer']),
 });
 
 
 const userData = Memory.alloc(Process.pageSize);
+
 function stalkerTraceRangeC(tid, base, size) {
     // const hello = new NativeFunction(cm.hello, 'void', []);
     // hello();
     userData.writePointer(base)
     const pointerSize = Process.pointerSize;
     userData.add(pointerSize).writePointer(base.add(size))
-    
+
     Stalker.follow(tid, {
         transform: arm64CM.transform,
         // onEvent: cm.process,
@@ -119,8 +118,8 @@ function stalkerTraceRange(tid, base, size) {
         transform: (iterator) => {
             const instruction = iterator.next();
             const startAddress = instruction.address;
-            const isModuleCode = startAddress.compare(base) >= 0 && 
-                startAddress.compare(base.add(size)) < 0;
+            // console.log('startAddress: ', startAddress.sub(base))
+            const isModuleCode = startAddress.compare(base) >= 0 && startAddress.compare(base.add(size)) < 0;
             // const isModuleCode = true;
             do {
                 iterator.keep();
@@ -132,11 +131,11 @@ function stalkerTraceRange(tid, base, size) {
                         val: JSON.stringify(instruction)
                     })
                     iterator.putCallout((context) => {
-                            send({
-                                type: 'ctx',
-                                tid: tid,
-                                val: JSON.stringify(context)
-                            })
+                        send({
+                            type: 'ctx',
+                            tid: tid,
+                            val: JSON.stringify(context)
+                        })
                     })
                 }
             } while (iterator.next() !== null);
@@ -145,10 +144,11 @@ function stalkerTraceRange(tid, base, size) {
 }
 
 
-function traceAddr(addr) {
-    let moduleMap = new ModuleMap();    
-    let targetModule = moduleMap.find(addr);
-    console.log(JSON.stringify(targetModule))
+function traceAddr(startTraceAddr, endTraceAddr) {
+    let moduleMap = new ModuleMap();
+    let targetModule = moduleMap.find(startTraceAddr);
+    console.log('targetModule: ', JSON.stringify(targetModule))
+
     let exports = targetModule.enumerateExports();
     let symbols = targetModule.enumerateSymbols();
     // send({
@@ -157,16 +157,39 @@ function traceAddr(addr) {
     // })
     // send({
     //     type: "sym",
-    
-
     // })
-    Interceptor.attach(addr, {
-        onEnter: function(args) {
+    let traceSize;
+    if (endTraceAddr != null) {
+        traceSize = endTraceAddr - startTraceAddr;
+    } else {
+        traceSize = targetModule.size
+    }
+    console.log('traceSize: ', traceSize, 'startTraceAddr: ', startTraceAddr);
+
+    // Interceptor.attach(Module.findExportByName("libc.so", "strncmp"), {
+    //     onEnter: function (args) {
+    //         let arg0 = Memory.readCString(args[0])
+    //         let arg1 = Memory.readCString(args[1])
+    //         console.log('strncmp arg0: ', arg0);
+    //         console.log('strncmp arg1: ', arg1);
+    //         if (arg0.indexOf('17f104') != -1) {
+    //             console.log('Context  : ' + JSON.stringify(this.context));
+    //             // console.log('堆栈开始')
+    //             console.log(Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\n'));
+    //             // console.log('堆栈结束')
+    //         }
+    //     },
+    //     onLeave: function (retval) {}
+    // });
+
+    // var libwechatnetwork = Module.findBaseAddress("libwechatnetwork.so");
+    Interceptor.attach(startTraceAddr, {
+        onEnter: function (args) {
+            console.log('onEnter................................................................');
             this.tid = Process.getCurrentThreadId()
-            // stalkerTraceRangeC(this.tid, targetModule.base, targetModule.size)
-            stalkerTraceRange(this.tid, targetModule.base, targetModule.size)
+            stalkerTraceRange(this.tid, startTraceAddr, traceSize)
         },
-        onLeave: function(ret) {
+        onLeave: function (ret) {
             Stalker.unfollow(this.tid);
             Stalker.garbageCollect()
             send({
@@ -195,7 +218,7 @@ function watcherLib(libname, callback) {
         Interceptor.replace(dlopen, new NativeCallback((filename, mode) => {
             const path = filename.readCString();
             const retval = dlopen(filename, mode);
-    
+
             if (path !== null) {
                 if (checkLibrary(path)) {
                     // eslint-disable-next-line @typescript-eslint/no-base-to-string
@@ -220,20 +243,30 @@ function watcherLib(libname, callback) {
     recv("config", (msg) => {
         const payload = msg.payload;
         console.log(JSON.stringify(payload))
-        const libname = payload.libname;
-        console.log(`libname:${libname}`)
-        if(payload.spawn) {
+        const filename = payload.filename;
+        console.log(`filename:${filename}`)
+
+        if (payload.spawn) {
             console.error(`todo: spawn inject not implemented`)
         } else {
             // const modules = Process.enumerateModules();
-            const targetModule = Process.getModuleByName(libname);
+            const targetModule = Process.getModuleByName(filename);
+
             let targetAddress = null;
-            if("symbol" in payload) {
+            if ("symbol" in payload) {
                 targetAddress = targetModule.findExportByName(payload.symbol);
-            } else if("offset" in payload) {
-                targetAddress = targetModule.base.add(ptr(payload.offset));
+            } {
+                targetAddress = targetModule.base.add(ptr(payload.start_addr));
             }
-            traceAddr(targetAddress)
+            console.log('targetAddress: ', targetAddress)
+
+            let endTraceAddr = null;
+            if ('end_addr' in payload) {
+                endTraceAddr = targetModule.base.add(ptr(payload.end_addr));
+            }
+            console.log('endTraceAddr: ', endTraceAddr)
+
+            traceAddr(targetAddress, endTraceAddr)
         }
     })
 })()

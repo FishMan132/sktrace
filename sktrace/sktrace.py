@@ -13,6 +13,7 @@ from sktracemgr import TraceMgr
 
 __version__ = "1.0.0"
 
+
 def _finish(args, device, pid, scripts):
     print('Stopping application (name={}, pid={})...'.format(
         args.target,
@@ -36,27 +37,39 @@ def _custom_script_on_message(message, data):
 
 
 def _parse_args():
-    parser = argparse.ArgumentParser(usage="sktrace [options] -l libname -i symbol|hexaddr target")
+    parser = argparse.ArgumentParser(
+        usage="sktrace [options] -l libname -i symbol|hexaddr target")
+
     parser.add_argument("-m", "--inject-method", choices=["spawn", "attach"],
                         default="spawn",
                         help="Specify how frida should inject into the process.")
-    parser.add_argument("-l", "--libname", required=True, 
+
+    parser.add_argument("-f", "--filename", required=True,
                         help="Specify a native library like libnative-lib.so")
-    parser.add_argument("-i", "--interceptor", required=True, 
+
+    parser.add_argument("-s", "--start_addr", required=True,
                         help="Specity a function (symbol or a hex offset address) to trace.")
-    parser.add_argument("-p", "--prepend", type=argparse.FileType("r"),
+
+    parser.add_argument('-e', "--end_addr",
+                        help="The end addr of the application to trace.")
+
+    parser.add_argument('-p', "--pid",
+                        help="The pid of the application to trace.")
+
+    parser.add_argument('-t', "--target",
+                        help="The name of the application to trace.")
+
+    parser.add_argument("-b", "--prepend", type=argparse.FileType("r"),
                         help="Prepend a Frida script to run before sktrace does.")
     parser.add_argument("-a", "--append", type=argparse.FileType("r"),
                         help="Append a Frida script to run after sktrace has started.")
     parser.add_argument("-v", "--version", action='version',
                         version="%(prog)s " + __version__,
                         help="Show the version.")
-    parser.add_argument("target",
-                        help="The name of the application to trace.")
+
     args = parser.parse_args()
 
     return args
-
 
 
 def main():
@@ -75,23 +88,27 @@ def main():
         "payload": {}
     }
 
-    config["payload"]["libname"] = args.libname
+    config["payload"]["filename"] = args.filename
 
-    if args.interceptor.startswith("0x") or args.interceptor.startswith("0X"):
-        config["payload"]["offset"] = int(args.interceptor, 16)
+    if args.start_addr.startswith("0x") or args.start_addr.startswith("0X"):
+        config["payload"]["start_addr"] = int(args.start_addr, 16)
     else:
-        config["payload"]["symbol"] = args.interceptor
-    
+        config["payload"]["symbol"] = args.start_addr
+    config["payload"]["end_addr"] = args.end_addr
+
     device = frida.get_usb_device(1)
     if args.inject_method == "spawn":
         raise Exception("working for this ...")
-        pid = device.spawn([args.target])
-        config["payload"]["spawn"] = True
+        # pid = device.spawn([args.target])
+        # config["payload"]["spawn"] = True
     else:
-        pid = device.get_process(args.target).pid
+        if args.pid:
+            pid = args.pid
+        else:
+            pid = device.get_process(args.target).pid
         config["payload"]["spawn"] = False
 
-    session = device.attach(pid)
+    session = device.attach(int(pid))
     scripts = {}
 
     if args.prepend:
@@ -115,8 +132,8 @@ def main():
         args.append.close()
         scripts["append"] = append
 
-    if args.inject_method == "spawn":
-        device.resume(pid)
+    # if args.inject_method == "spawn":
+    #     device.resume(pid)
 
     print("Tracing. Press any key to quit...")
 
@@ -127,11 +144,6 @@ def main():
 
     # _finish(args, device, pid, scripts)
 
+
 if __name__ == '__main__':
     main()
-
-
-
-
-
-
