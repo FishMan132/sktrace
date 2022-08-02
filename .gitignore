@@ -1,6 +1,11 @@
 .vscode/
-*__pycache__/
+sktrace/*__pycache__/
 *.py[cod]
 *$py.class
 build/
 node_modules/
+sktrace/*.log
+sktrace/*.txt
+.idea
+.DS_Store
+interruptor

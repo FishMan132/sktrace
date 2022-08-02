@@ -4,6 +4,7 @@ A instruction trace script based on Frida-Stalker.
 """
 
 import argparse
+from ast import arg
 import binascii
 import json
 import os
@@ -63,8 +64,7 @@ def _parse_args():
                         help="Prepend a Frida script to run before sktrace does.")
     parser.add_argument("-a", "--append", type=argparse.FileType("r"),
                         help="Append a Frida script to run after sktrace has started.")
-    parser.add_argument("-v", "--version", action='version',
-                        version="%(prog)s " + __version__,
+    parser.add_argument("-v", "--version", action='version', version="%(prog)s " + __version__,
                         help="Show the version.")
 
     args = parser.parse_args()
@@ -80,9 +80,9 @@ def main():
         raise Exception("Read script error.")
 
     trace_mgr = TraceMgr()
-
+    
     args = _parse_args()
-
+    
     config = {
         "type": "config",
         "payload": {}
@@ -97,6 +97,10 @@ def main():
     config["payload"]["end_addr"] = args.end_addr
 
     device = frida.get_usb_device(1)
+
+    if args.end_addr:
+        config["payload"]['endAddress'] = args.end_addr
+
     if args.inject_method == "spawn":
         raise Exception("working for this ...")
         # pid = device.spawn([args.target])

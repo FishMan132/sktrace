@@ -113,21 +113,21 @@ function stalkerTraceRangeC(tid, base, size) {
 }
 
 
-function stalkerTraceRange(tid, base, size) {
+function stalkerTraceRange(tid, startTraceAddr, traceSize, moduleBase) {
     Stalker.follow(tid, {
         transform: (iterator) => {
             const instruction = iterator.next();
-            const startAddress = instruction.address;
-            // console.log('startAddress: ', startAddress.sub(base))
-            const isModuleCode = startAddress.compare(base) >= 0 && startAddress.compare(base.add(size)) < 0;
+            const insAddress = instruction.address;
+            const isModuleCode = insAddress.compare(startTraceAddr) >= 0 && insAddress.compare(startTraceAddr.add(traceSize)) < 0;
             // const isModuleCode = true;
             do {
-                iterator.keep();
                 if (isModuleCode) {
+                    // console.log('startAddress: ', insAddress.sub(moduleBase))
                     send({
                         type: 'inst',
                         tid: tid,
-                        block: startAddress,
+                        moduleBase: moduleBase,
+                        block: insAddress.sub(moduleBase),
                         val: JSON.stringify(instruction)
                     })
                     iterator.putCallout((context) => {
@@ -138,13 +138,14 @@ function stalkerTraceRange(tid, base, size) {
                         })
                     })
                 }
+                iterator.keep();
             } while (iterator.next() !== null);
         }
     })
 }
 
 
-function traceAddr(startTraceAddr, endTraceAddr) {
+function traceAddr(startTraceAddr, endTraceAddr, moduleBase) {
     let moduleMap = new ModuleMap();
     let targetModule = moduleMap.find(startTraceAddr);
     console.log('targetModule: ', JSON.stringify(targetModule))
@@ -165,36 +166,19 @@ function traceAddr(startTraceAddr, endTraceAddr) {
         traceSize = targetModule.size
     }
     console.log('traceSize: ', traceSize, 'startTraceAddr: ', startTraceAddr);
-
-    // Interceptor.attach(Module.findExportByName("libc.so", "strncmp"), {
-    //     onEnter: function (args) {
-    //         let arg0 = Memory.readCString(args[0])
-    //         let arg1 = Memory.readCString(args[1])
-    //         console.log('strncmp arg0: ', arg0);
-    //         console.log('strncmp arg1: ', arg1);
-    //         if (arg0.indexOf('17f104') != -1) {
-    //             console.log('Context  : ' + JSON.stringify(this.context));
-    //             // console.log('堆栈开始')
-    //             console.log(Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\n'));
-    //             // console.log('堆栈结束')
-    //         }
-    //     },
-    //     onLeave: function (retval) {}
-    // });
-
     // var libwechatnetwork = Module.findBaseAddress("libwechatnetwork.so");
     Interceptor.attach(startTraceAddr, {
         onEnter: function (args) {
             console.log('onEnter................................................................');
             this.tid = Process.getCurrentThreadId()
-            stalkerTraceRange(this.tid, startTraceAddr, traceSize)
+            stalkerTraceRange(this.tid, startTraceAddr, traceSize, moduleBase)
         },
         onLeave: function (ret) {
             Stalker.unfollow(this.tid);
             Stalker.garbageCollect()
             send({
                 type: "fin",
-                tid: this.tid
+                tid: this.tid,
             })
         }
     })
@@ -266,7 +250,7 @@ function watcherLib(libname, callback) {
             }
             console.log('endTraceAddr: ', endTraceAddr)
 
-            traceAddr(targetAddress, endTraceAddr)
+            traceAddr(targetAddress, endTraceAddr, targetModule.base)
         }
     })
 })()
