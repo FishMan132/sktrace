@@ -8,6 +8,7 @@ from ast import arg
 import binascii
 import json
 import os
+from turtle import pd
 import frida
 
 from sktracemgr import TraceMgr
@@ -48,10 +49,13 @@ def _parse_args():
     parser.add_argument("-f", "--filename", required=True,
                         help="Specify a native library like libnative-lib.so")
 
-    parser.add_argument("-s", "--start_addr", required=True,
+    parser.add_argument("-at", "--attach_addr", required=True,
+                        help="Specity a addr to attach.")
+
+    parser.add_argument("-s", "--start_addr", 
                         help="Specity a function (symbol or a hex offset address) to trace.")
 
-    parser.add_argument('-e', "--end_addr",
+    parser.add_argument('-e', "--end_addr", required=True,
                         help="The end addr of the application to trace.")
 
     parser.add_argument('-p', "--pid",
@@ -90,21 +94,27 @@ def main():
 
     config["payload"]["filename"] = args.filename
 
+    if args.attach_addr:
+        config["payload"]["attach_addr"] = args.attach_addr
+
+    if args.end_addr:
+        config["payload"]["end_addr"] = args.end_addr
+
     if args.start_addr.startswith("0x") or args.start_addr.startswith("0X"):
-        config["payload"]["start_addr"] = int(args.start_addr, 16)
+        # config["payload"]["start_addr"] = int(args.start_addr, 16)
+        config["payload"]["start_addr"] = args.start_addr
     else:
         config["payload"]["symbol"] = args.start_addr
-    config["payload"]["end_addr"] = args.end_addr
 
     device = frida.get_usb_device(1)
 
-    if args.end_addr:
-        config["payload"]['endAddress'] = args.end_addr
-
     if args.inject_method == "spawn":
-        raise Exception("working for this ...")
-        # pid = device.spawn([args.target])
-        # config["payload"]["spawn"] = True
+        # raise Exception("working for this ...")
+        print('use spawn,target: %s' % args.target)
+        pid = device.spawn([args.target])
+        device.resume(pid)
+        print('pid: ',pid)
+        config["payload"]["spawn"] = True
     else:
         if args.pid:
             pid = args.pid

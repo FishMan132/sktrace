@@ -112,17 +112,19 @@ function stalkerTraceRangeC(tid, base, size) {
     })
 }
 
-
+let tmpAddr = 0x0;
 function stalkerTraceRange(tid, startTraceAddr, traceSize, moduleBase) {
+
     Stalker.follow(tid, {
         transform: (iterator) => {
             const instruction = iterator.next();
             const insAddress = instruction.address;
             const isModuleCode = insAddress.compare(startTraceAddr) >= 0 && insAddress.compare(startTraceAddr.add(traceSize)) < 0;
-            // const isModuleCode = true;
+            //因为 frida 的 stalker 是按照 block 来的，这里的insAddress是block 的首地址
+            //下面的 while 循环是遍历 block 里面每条指令
+            // console.log('startAddress: ', insAddress.sub(moduleBase))
             do {
                 if (isModuleCode) {
-                    // console.log('startAddress: ', insAddress.sub(moduleBase))
                     send({
                         type: 'inst',
                         tid: tid,
@@ -145,29 +147,79 @@ function stalkerTraceRange(tid, startTraceAddr, traceSize, moduleBase) {
 }
 
 
-function traceAddr(startTraceAddr, endTraceAddr, moduleBase) {
+function traceAddr(targetAddress, startTraceAddr, endTraceAddr, moduleBase) {
     let moduleMap = new ModuleMap();
-    let targetModule = moduleMap.find(startTraceAddr);
+    let targetModule = moduleMap.find(targetAddress);
     console.log('targetModule: ', JSON.stringify(targetModule))
 
     let exports = targetModule.enumerateExports();
     let symbols = targetModule.enumerateSymbols();
-    // send({
-    //     type: "module", 
-    //     targetModule
-    // })
-    // send({
-    //     type: "sym",
-    // })
+
     let traceSize;
     if (endTraceAddr != null) {
         traceSize = endTraceAddr - startTraceAddr;
     } else {
         traceSize = targetModule.size
     }
-    console.log('traceSize: ', traceSize, 'startTraceAddr: ', startTraceAddr);
+    // console.log('traceSize: ', traceSize, 'startTraceAddr: ', startTraceAddr);
     // var libwechatnetwork = Module.findBaseAddress("libwechatnetwork.so");
-    Interceptor.attach(startTraceAddr, {
+
+    //在 stalker 之前进行 hook
+    // var addr_2C70C = moduleBase.add(0x2C70C);
+    // Interceptor.attach(addr_2C70C, {
+    //     onEnter: function (args) {
+    //         this.arg1 = args[1];
+    //         // console.log('before call addr_2C70C args1...this.arg1', this.arg1, "\n", hexdump(this.arg1));
+    //     },
+    //     onLeave: function (retval) {
+    //         console.log('after call addr_2C70C args1...this.arg1', this.arg1, "\n", hexdump(this.arg1));//arg1 和 send 发送的数据偏移 8 字节之后的数据一致
+    //     }
+    // });
+    //调用send函数，arg1 确认是发送的数据
+    // var addr_2BF00 = moduleBase.add(0x2BF00);
+    // Interceptor.attach(addr_2BF00, {
+    //     onEnter: function (args) {
+    //         let len = parseInt(args[2], 16);
+    //         console.log('call send buff... args[1]: ', args[1], '\nhexdumo', hexdump(args[1], { length: len }), ' len: ', args[2]);
+    //     },
+    //     onLeave: function (retval) {
+    //     }
+    // });
+    // var addr_31920 = moduleBase.add(0x31920);
+    // Interceptor.attach(addr_31920, {
+    //     onEnter: function (args) {
+    //         this.args4 = args[4];
+    //         console.log('before call addr_31920 buff...args4: ', this.args4, hexdump(this.args4));
+    //     },
+    //     onLeave: function (retval) {
+    //         console.log('call addr_31920 buff...args4: ', this.args4, hexdump(this.args4));
+    //     }
+    // });
+    // var addr_32398 = moduleBase.add(0x32398);
+    // Interceptor.attach(addr_32398, {
+    //     onEnter: function (args) {
+    //         this.args1 = args[1];
+    //         // console.log('before call addr_32398 buff...args4: ');
+    //         console.log('pid: ', Process.id, ' tid: ', Process.getCurrentThreadId())
+    //     },
+    //     onLeave: function (retval) {
+    //         console.log('after call addr_32398 buff...args1: ', hexdump(this.args1, { length: 16 }));
+    //     }
+    // });
+
+    // var recvptr = Module.findExportByName(null, "recv");
+    // console.log('recvptr: ', recvptr)
+    // Interceptor.attach(recvptr, {
+    //     onEnter: function (args) {
+    //         let len = parseInt(args[2], 16)
+    //         console.log('call recvptr... args[1]: ', args[1], '\nhexdumo', hexdump(args[1], { length: len }), ' len: ', args[2]);
+    //     },
+    //     onLeave: function (retval) {
+    //     }
+    // });
+
+
+    Interceptor.attach(targetAddress, {
         onEnter: function (args) {
             console.log('onEnter................................................................');
             this.tid = Process.getCurrentThreadId()
@@ -218,7 +270,29 @@ function watcherLib(libname, callback) {
     }
 }
 
+function trace(targetModule, payload) {
+    let targetAddress = null;
+    if ("symbol" in payload) {
+        targetAddress = targetModule.findExportByName(payload.symbol);
+    } else if ("attach_addr" in payload) {
+        targetAddress = targetModule.base.add(ptr(payload.attach_addr));
+    } else {
+        targetAddress = targetModule.base.add(ptr(payload.start_addr));
+    }
+    console.log('targetAddress: ', targetAddress)
 
+    let startTraceAddr = null;
+    if ('start_addr' in payload) {
+        startTraceAddr = targetModule.base.add(ptr(payload.start_addr));
+    }
+    let endTraceAddr = null;
+    if ('end_addr' in payload) {
+        endTraceAddr = targetModule.base.add(ptr(payload.end_addr));
+    }
+    console.log('endTraceAddr: ', endTraceAddr)
+
+    traceAddr(targetAddress, startTraceAddr, endTraceAddr, targetModule.base)
+}
 
 (() => {
 
@@ -231,26 +305,14 @@ function watcherLib(libname, callback) {
         console.log(`filename:${filename}`)
 
         if (payload.spawn) {
-            console.error(`todo: spawn inject not implemented`)
+            let targetModule = Process.findModuleByName(filename);
+            while (targetModule === undefined || targetModule === null) {
+                targetModule = Process.findModuleByName(filename);
+            }
+            trace(targetModule, payload)
         } else {
-            // const modules = Process.enumerateModules();
             const targetModule = Process.getModuleByName(filename);
-
-            let targetAddress = null;
-            if ("symbol" in payload) {
-                targetAddress = targetModule.findExportByName(payload.symbol);
-            } {
-                targetAddress = targetModule.base.add(ptr(payload.start_addr));
-            }
-            console.log('targetAddress: ', targetAddress)
-
-            let endTraceAddr = null;
-            if ('end_addr' in payload) {
-                endTraceAddr = targetModule.base.add(ptr(payload.end_addr));
-            }
-            console.log('endTraceAddr: ', endTraceAddr)
-
-            traceAddr(targetAddress, endTraceAddr, targetModule.base)
+            trace(targetModule, payload)
         }
     })
 })()
